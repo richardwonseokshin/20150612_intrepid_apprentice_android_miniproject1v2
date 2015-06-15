@@ -2,6 +2,7 @@ package com.intrepid.wonseokshin.twitterscriberetrofit;
 
 import android.support.v7.app.ActionBarActivity;
 import android.os.Bundle;
+import android.util.Base64;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -10,6 +11,7 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.apache.http.auth.AuthenticationException;
 import org.scribe.builder.ServiceBuilder;
 import org.scribe.builder.api.TwitterApi;
 import org.scribe.model.OAuthRequest;
@@ -18,6 +20,16 @@ import org.scribe.model.Token;
 import org.scribe.model.Verb;
 import org.scribe.model.Verifier;
 import org.scribe.oauth.OAuthService;
+
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.SignatureException;
+import java.util.Formatter;
+import java.util.Random;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 
 public class MainActivity extends ActionBarActivity {
@@ -131,6 +143,8 @@ public class MainActivity extends ActionBarActivity {
                         });
 
 
+                        testHTTPRequest();
+
 
                         try {
                             threadSignIn.join();
@@ -143,6 +157,147 @@ public class MainActivity extends ActionBarActivity {
 
             threadSignIn.start();
         }
+    }
 
+
+    /**
+     * twitter public api, notes
+     Authorization parmeters for http requests:
+     OAuth oauth_consumer_key="1RvbG1B0GewG7h40txjiqD50x",
+     oauth_nonce="kYjzVBB8Y0ZFabxSWbWovY3uYSQ2pTgmZeNu2VS4cg",
+
+     oauth_signature="tnnArxj06cWHq44gCs1OSKk%2FjLY%3D",
+
+     oauth_signature_method="HMAC-SHA1",
+
+     oauth_timestamp="1318622958",
+     oauth_token="370773112-GmHxMAgYyLbNEtIKZeRNFsMKPR9EyMZeS9weJAEb",
+     oauth_version="1.0"
+     */
+    public void testHTTPRequest(){
+        //GET statuses/home_timeline
+        String request_base_url = "https://api.twitter.com/1.1/statuses/home_timeline.json";
+
+        String oAuthConsumerKey = "1RvbG1B0GewG7h40txjiqD50x";
+
+        String stringNonce = generateNonce();
+
+        String oauth_signature_method = "HMAC-SHA1";
+
+        //number of seconds since unix epoch, 1970 Jan 1
+        long timeStamp = System.currentTimeMillis() / 1000;
+
+        //access token for twitter app
+        String oauth_token = accessToken.getToken();
+
+        String oauth_version = "1.0";
+
+
+
+        String stringRequestParams = "oauth_consumer_key" + "=" + oAuthConsumerKey +
+                               "&" + "oauth_nonce" + "=" + stringNonce +
+                               "&" + "oauth_signature_method" + "=" + oauth_signature_method +
+                               "&" + "oauth_timestamp" + "=" + timeStamp +
+                               "&" + "oauth_token" + "=" + oauth_token +
+                               "&" + "oauth_version" + "=" + oauth_version;
+
+
+
+
+        //Create request signature: https://dev.twitter.com/oauth/overview/creating-signatures
+        String outputString = "";
+        //Convert the HTTP Method to uppercase and set the output string equal to this value.
+        outputString = "GET";
+        //Append the ‘&’ character to the output string.
+        outputString = outputString + "&";
+        //Percent encode the URL and append it to the output string.
+        outputString = outputString + OAuth.percentEncode(request_base_url);
+        //Append the ‘&’ character to the output string.
+        outputString = outputString + "&";
+        //Percent encode the parameter string and append it to the output string.
+        outputString = outputString + OAuth.percentEncode(stringRequestParams);
+
+        String stringSignatureBase = outputString;
+
+
+        //Calculate signature: https://dev.twitter.com/oauth/overview/creating-signatures
+        String signing_key = "";
+        String consumer_secret = "Bk3hdEHgzW3Ivi49kZ5PjzBf03MailerbRA9YMJIXdpuFIRXk0";
+        String access_token_secret = accessToken.getSecret();
+        signing_key = OAuth.percentEncode(consumer_secret) + "&" + OAuth.percentEncode(access_token_secret);
+        String signature = "";
+        try {
+            signature =  Base64.encodeToString(calculateRFC2104HMAC(stringSignatureBase, signing_key).getBytes(), Base64.DEFAULT);
+        } catch (SignatureException e) {
+            e.printStackTrace();
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+        } catch (InvalidKeyException e) {
+            e.printStackTrace();
+        }
+
+        final String signatureFinal = signature;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                TextView tvHTTPRequest = (TextView)findViewById(R.id.tv_signin_response);
+
+                Toast.makeText(MainActivity.this, "Signature:\n" + signatureFinal, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+
+    //HMAC-SHA1, modified from https://gist.github.com/ishikawa/88599
+
+    private static final String HMAC_SHA1_ALGORITHM = "HmacSHA1";
+
+    private static String toHexString(byte[] bytes) {
+        Formatter formatter = new Formatter();
+
+        for (byte b : bytes) {
+            formatter.format("%02x", b);
+        }
+
+        return formatter.toString();
+    }
+
+    public static String calculateRFC2104HMAC(String data, String key)
+            throws SignatureException, NoSuchAlgorithmException, InvalidKeyException
+    {
+        SecretKeySpec signingKey = new SecretKeySpec(key.getBytes(), HMAC_SHA1_ALGORITHM);
+        Mac mac = Mac.getInstance(HMAC_SHA1_ALGORITHM);
+        mac.init(signingKey);
+        return toHexString(mac.doFinal(data.getBytes()));
+    }
+
+
+
+
+    /**
+     * generate a nonce
+     * generated by base64 encoding 32 bytes of random data, and stripping out all non-word characters
+     * any approach which produces a relatively random alphanumeric string should be OK here.
+     */
+    private static int NONCE_LENGTH = 32;
+    private String generateNonce(){
+        try {
+            SecureRandom secureRandom = SecureRandom.getInstance("SHA1PRNG");
+            byte[] nonceByteArray = new byte[NONCE_LENGTH];
+
+            //get 32 bytes of randomized data from SecureRandom class to generate a nonce
+            secureRandom.nextBytes(nonceByteArray);
+
+            //as in twitter's example authorizing http requests, use a base64 encoding
+            String nonceString = Base64.encodeToString(nonceByteArray, Base64.DEFAULT);
+
+            //as in twitter's example authorizing http requests, strip the nonce of nonword characters
+            return nonceString.replaceAll("[^\\p{L}\\p{Nd}]+", "");
+        }
+        catch (Exception e) {
+            //throw new AuthenticationException(e.getMessage(),e);
+            e.printStackTrace();
+        }
+        return null;
     }
 }
