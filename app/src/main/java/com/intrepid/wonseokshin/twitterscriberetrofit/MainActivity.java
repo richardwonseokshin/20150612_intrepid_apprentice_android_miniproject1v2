@@ -3,6 +3,7 @@ package com.intrepid.wonseokshin.twitterscriberetrofit;
 import android.support.v7.app.ActionBarActivity;
 import android.os.Bundle;
 import android.util.Base64;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -11,7 +12,15 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
+import org.apache.http.StatusLine;
 import org.apache.http.auth.AuthenticationException;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.util.EntityUtils;
 import org.scribe.builder.ServiceBuilder;
 import org.scribe.builder.api.TwitterApi;
 import org.scribe.model.OAuthRequest;
@@ -21,11 +30,15 @@ import org.scribe.model.Verb;
 import org.scribe.model.Verifier;
 import org.scribe.oauth.OAuthService;
 
+import java.io.IOException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.SignatureException;
+import java.util.Arrays;
 import java.util.Formatter;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Random;
 
 import javax.crypto.Mac;
@@ -39,6 +52,14 @@ public class MainActivity extends ActionBarActivity {
     private OAuthService service;
     private Token requestToken;
     private Token accessToken;
+    private String request_base_url;
+    private String oAuthConsumerKey;
+    private String stringNonce;
+    private String oauth_signature_method;
+    private long timeStamp;
+    private String oauth_token;
+    private String oauth_version;
+    private String signature;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -176,33 +197,41 @@ public class MainActivity extends ActionBarActivity {
      */
     public void testHTTPRequest(){
         //GET statuses/home_timeline
-        String request_base_url = "https://api.twitter.com/1.1/statuses/home_timeline.json";
+        request_base_url = "https://api.twitter.com/1.1/statuses/home_timeline.json";
 
-        String oAuthConsumerKey = "1RvbG1B0GewG7h40txjiqD50x";
+        oAuthConsumerKey = "1RvbG1B0GewG7h40txjiqD50x";
 
-        String stringNonce = generateNonce();
+        stringNonce = generateNonce();
 
-        String oauth_signature_method = "HMAC-SHA1";
+        oauth_signature_method = "HMAC-SHA1";
 
         //number of seconds since unix epoch, 1970 Jan 1
-        long timeStamp = System.currentTimeMillis() / 1000;
+        timeStamp = System.currentTimeMillis() / 1000;
 
         //access token for twitter app
-        String oauth_token = accessToken.getToken();
+        oauth_token = accessToken.getToken();
 
-        String oauth_version = "1.0";
-
-
-
-        String stringRequestParams = "oauth_consumer_key" + "=" + oAuthConsumerKey +
-                               "&" + "oauth_nonce" + "=" + stringNonce +
-                               "&" + "oauth_signature_method" + "=" + oauth_signature_method +
-                               "&" + "oauth_timestamp" + "=" + timeStamp +
-                               "&" + "oauth_token" + "=" + oauth_token +
-                               "&" + "oauth_version" + "=" + oauth_version;
+        oauth_version = "1.0";
 
 
+        Map <String,String> mapKeyValue = new HashMap<>();
+        mapKeyValue.put(OAuth.percentEncode("oauth_consumer_key"), OAuth.percentEncode(oAuthConsumerKey));
+        mapKeyValue.put(OAuth.percentEncode("oauth_nonce"), OAuth.percentEncode(stringNonce));
+        mapKeyValue.put(OAuth.percentEncode("oauth_signature_method"), OAuth.percentEncode(oauth_signature_method));
+        mapKeyValue.put(OAuth.percentEncode("oauth_timestamp"), OAuth.percentEncode("" + timeStamp));
+        mapKeyValue.put(OAuth.percentEncode("oauth_token"), OAuth.percentEncode(oauth_token));
+        mapKeyValue.put(OAuth.percentEncode("oauth_version"), OAuth.percentEncode(oauth_version));
 
+
+        String stringRequestParams = "";
+
+
+        Object[] keys = mapKeyValue.keySet().toArray();
+        Arrays.sort(keys);
+        for(Object key : keys) {
+            stringRequestParams = stringRequestParams + key + "=" + mapKeyValue.get(key) + "&";
+        }
+        stringRequestParams = stringRequestParams.substring(0, stringRequestParams.length() - 1); //to remove the last "&"
 
         //Create request signature: https://dev.twitter.com/oauth/overview/creating-signatures
         String outputString = "";
@@ -216,18 +245,16 @@ public class MainActivity extends ActionBarActivity {
         outputString = outputString + "&";
         //Percent encode the parameter string and append it to the output string.
         outputString = outputString + OAuth.percentEncode(stringRequestParams);
-
-        String stringSignatureBase = outputString;
-
+        final String stringSignatureBase = outputString;
 
         //Calculate signature: https://dev.twitter.com/oauth/overview/creating-signatures
         String signing_key = "";
         String consumer_secret = "Bk3hdEHgzW3Ivi49kZ5PjzBf03MailerbRA9YMJIXdpuFIRXk0";
         String access_token_secret = accessToken.getSecret();
         signing_key = OAuth.percentEncode(consumer_secret) + "&" + OAuth.percentEncode(access_token_secret);
-        String signature = "";
+        signature = "";
         try {
-            signature =  Base64.encodeToString(calculateRFC2104HMAC(stringSignatureBase, signing_key).getBytes(), Base64.DEFAULT);
+            signature =  Base64.encodeToString(calculateRFC2104HMAC(stringSignatureBase, signing_key), Base64.NO_WRAP);
         } catch (SignatureException e) {
             e.printStackTrace();
         } catch (NoSuchAlgorithmException e) {
@@ -236,22 +263,112 @@ public class MainActivity extends ActionBarActivity {
             e.printStackTrace();
         }
 
-        final String signatureFinal = signature;
+        final String homeTimeline = getHomeTimeline();
+
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 TextView tvHTTPRequest = (TextView)findViewById(R.id.tv_signin_response);
-
-                Toast.makeText(MainActivity.this, "Signature:\n" + signatureFinal, Toast.LENGTH_LONG).show();
+                tvHTTPRequest.setText(homeTimeline);
             }
         });
     }
 
+    private String getHomeTimeline(){
+        String url = request_base_url;
+        String authorizationHeader = generateAuthorizationHeader();
+
+        DefaultHttpClient httpclient = new DefaultHttpClient(); // create new httpClient
+        HttpGet httpGet = new HttpGet(url); // create new httpGet object
+        StringBuilder body = new StringBuilder();
+
+        httpGet.setHeader("Authorization", authorizationHeader);
+
+        try {
+            HttpResponse response = httpclient.execute(httpGet); // execute httpGet
+            StatusLine statusLine = response.getStatusLine();
+            int statusCode = statusLine.getStatusCode();
+            if (statusCode == HttpStatus.SC_OK) {
+                // System.out.println(statusLine);
+                body.append(statusLine + "\n");
+                HttpEntity e = response.getEntity();
+                String entity = EntityUtils.toString(e);
+                body.append(entity);
+            } else {
+                body.append(statusLine + "\n");
+                // System.out.println(statusLine);
+            }
+        } catch (ClientProtocolException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return body.toString();
+    }
+
+
+    //generates the authorization header for the twitter home timeline retrieval api call using http get
+    //based on the consumer key, consumer key secret, access token, and the other required headers
+    private String generateAuthorizationHeader(){
+        String DST = "";
+        DST = DST + "OAuth ";
+
+        DST = DST + OAuth.percentEncode("oauth_consumer_key");
+        DST = DST + "=";
+        DST = DST + "\"";
+        DST = DST + OAuth.percentEncode(oAuthConsumerKey);
+        DST = DST + "\"";
+        DST = DST + ", ";
+
+        DST = DST + OAuth.percentEncode("oauth_nonce");
+        DST = DST + "=";
+        DST = DST + "\"";
+        DST = DST + OAuth.percentEncode(stringNonce);
+        DST = DST + "\"";
+        DST = DST + ", ";
+
+        DST = DST + OAuth.percentEncode("oauth_signature");
+        DST = DST + "=";
+        DST = DST + "\"";
+        DST = DST + OAuth.percentEncode(signature);
+        DST = DST + "\"";
+        DST = DST + ", ";
+
+        DST = DST + OAuth.percentEncode("oauth_signature_method");
+        DST = DST + "=";
+        DST = DST + "\"";
+        DST = DST + OAuth.percentEncode(oauth_signature_method);
+        DST = DST + "\"";
+        DST = DST + ", ";
+
+        DST = DST + OAuth.percentEncode("oauth_timestamp");
+        DST = DST + "=";
+        DST = DST + "\"";
+        DST = DST + OAuth.percentEncode("" + timeStamp);
+        DST = DST + "\"";
+        DST = DST + ", ";
+
+        DST = DST + OAuth.percentEncode("oauth_token");
+        DST = DST + "=";
+        DST = DST + "\"";
+        DST = DST + OAuth.percentEncode(oauth_token);
+        DST = DST + "\"";
+        DST = DST + ", ";
+
+        DST = DST + OAuth.percentEncode("oauth_version");
+        DST = DST + "=";
+        DST = DST + "\"";
+        DST = DST + OAuth.percentEncode(oauth_version);
+        DST = DST + "\"";
+
+        return DST;
+    }
+
 
     //HMAC-SHA1, modified from https://gist.github.com/ishikawa/88599
-
+    //returns the byte array of the sha1 instead of the string representation
     private static final String HMAC_SHA1_ALGORITHM = "HmacSHA1";
-
     private static String toHexString(byte[] bytes) {
         Formatter formatter = new Formatter();
 
@@ -262,17 +379,14 @@ public class MainActivity extends ActionBarActivity {
         return formatter.toString();
     }
 
-    public static String calculateRFC2104HMAC(String data, String key)
+    public static byte[] calculateRFC2104HMAC(String data, String key)
             throws SignatureException, NoSuchAlgorithmException, InvalidKeyException
     {
         SecretKeySpec signingKey = new SecretKeySpec(key.getBytes(), HMAC_SHA1_ALGORITHM);
         Mac mac = Mac.getInstance(HMAC_SHA1_ALGORITHM);
         mac.init(signingKey);
-        return toHexString(mac.doFinal(data.getBytes()));
+        return mac.doFinal(data.getBytes());
     }
-
-
-
 
     /**
      * generate a nonce
@@ -289,7 +403,7 @@ public class MainActivity extends ActionBarActivity {
             secureRandom.nextBytes(nonceByteArray);
 
             //as in twitter's example authorizing http requests, use a base64 encoding
-            String nonceString = Base64.encodeToString(nonceByteArray, Base64.DEFAULT);
+            String nonceString = Base64.encodeToString(nonceByteArray, Base64.NO_WRAP);
 
             //as in twitter's example authorizing http requests, strip the nonce of nonword characters
             return nonceString.replaceAll("[^\\p{L}\\p{Nd}]+", "");
@@ -300,4 +414,5 @@ public class MainActivity extends ActionBarActivity {
         }
         return null;
     }
+
 }
