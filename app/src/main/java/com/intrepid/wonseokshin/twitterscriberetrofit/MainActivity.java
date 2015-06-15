@@ -38,11 +38,16 @@ import java.security.SignatureException;
 import java.util.Arrays;
 import java.util.Formatter;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+
+import retrofit.Callback;
+import retrofit.RestAdapter;
+import retrofit.RetrofitError;
 
 
 public class MainActivity extends ActionBarActivity {
@@ -158,7 +163,7 @@ public class MainActivity extends ActionBarActivity {
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                ((TextView)findViewById(R.id.tv_signin_response)).setText(response.getBody());
+                                //((TextView)findViewById(R.id.tv_signin_response)).setText(response.getBody());
                                 ((WebView) findViewById(R.id.webview_login)).clearCache(true);
                             }
                         });
@@ -263,8 +268,10 @@ public class MainActivity extends ActionBarActivity {
             e.printStackTrace();
         }
 
-        final String homeTimeline = getHomeTimeline();
+        //final String homeTimeline = getHomeTimeline();
+        getHomeTimeline();
 
+        /*
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -272,9 +279,53 @@ public class MainActivity extends ActionBarActivity {
                 tvHTTPRequest.setText(homeTimeline);
             }
         });
+        */
     }
 
     private String getHomeTimeline(){
+        String authorizationHeader = generateAuthorizationHeader();
+
+        Log.e("authorizationHeader", authorizationHeader);
+
+        RestAdapter restAdapter = new RestAdapter.Builder()
+                .setEndpoint("https://api.twitter.com")
+                .build();
+
+        TwitterService service = restAdapter.create(TwitterService.class);
+        service.getHomeTimeline(authorizationHeader, new Callback<List<HomeTimeline>>() {
+            @Override
+            public void success(List<HomeTimeline> homeTimelineItems, retrofit.client.Response response) {
+                
+                
+                TextView tvHTTPRequest = (TextView) findViewById(R.id.tv_signin_response);
+                tvHTTPRequest.setText("Success!\n");
+
+                for (HomeTimeline homeTimelineItem : homeTimelineItems) {
+                    tvHTTPRequest.append("\n" + homeTimelineItem.getCreatedAt());
+                    tvHTTPRequest.append("\n" + homeTimelineItem.getText() + "\n");
+                }
+
+                        /*
+                        TextView tvHTTPRequest = (TextView) findViewById(R.id.tv_signin_response);
+                        tvHTTPRequest.setText("\n\n\n\n\n=======created at: \n\n\n\n\n" + htl.getCreatedAt());
+                        tvHTTPRequest.setText("created at: " + htl.getCreatedAt());
+                        tvHTTPRequest.append("\ntext:" + htl.getText());
+                        tvHTTPRequest.append("\nname&screenname:" + htl.getUser().getName() + " : " + htl.getUser().getScreenName());
+                        */
+                        //TextView tvHTTPRequest = (TextView) findViewById(R.id.tv_signin_response);
+                        //tvHTTPRequest.setText("Success");
+            }
+
+            @Override
+            public void failure(RetrofitError retrofitError) {
+                TextView tvHTTPRequest = (TextView) findViewById(R.id.tv_signin_response);
+                tvHTTPRequest.setText("failed: " + retrofitError.getMessage());
+            }
+        });
+
+        return "";
+
+        /*
         String url = request_base_url;
         String authorizationHeader = generateAuthorizationHeader();
 
@@ -290,12 +341,12 @@ public class MainActivity extends ActionBarActivity {
             int statusCode = statusLine.getStatusCode();
             if (statusCode == HttpStatus.SC_OK) {
                 // System.out.println(statusLine);
-                body.append(statusLine + "\n");
+                body.append(statusLine);// + "\n");
                 HttpEntity e = response.getEntity();
                 String entity = EntityUtils.toString(e);
                 body.append(entity);
             } else {
-                body.append(statusLine + "\n");
+                body.append(statusLine);// + "\n");
                 // System.out.println(statusLine);
             }
         } catch (ClientProtocolException e) {
@@ -304,7 +355,11 @@ public class MainActivity extends ActionBarActivity {
             e.printStackTrace();
         }
 
+
+        Log.e("response", body.toString());
+
         return body.toString();
+        */
     }
 
 
